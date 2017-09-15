@@ -1,0 +1,13 @@
+Notes
+- palin processes are kicked off by master
+- each palin process handles one string and then dies
+- the master process enforces upper bound on # of palin processes <= 19
+- when master process detects a palin process dies, it reuses its sequential id
+
+Stages of Master
+- set up signals
+- parse input options
+- prepare shared memory
+- read strings from file into shm
+- kick off a pool of worker processes
+    - max out at 19 workers and wait() for a child to terminate
