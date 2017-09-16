@@ -17,6 +17,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 int main(int argc, char* argv[])
 {
     // Local (non-shared) string buffer
@@ -39,24 +44,27 @@ int main(int argc, char* argv[])
 
     if (strings.buf == NULL)
     {
+        fprintf(stderr, "%s: ", argv[0]);
         perror("unable to allocate initial buffer capacity");
         return 1;
     }
 
     // Open input strings file for read
-    FILE* strings_file = fopen("../test.in", "r"); // TODO: Get file path from cmd args
+    FILE* strings_file = fopen("test.in", "r"); // TODO: Get file path from cmd args
 
     if (strings_file == NULL)
     {
-        perror("unable to open strings file for read");
+        fprintf(stderr, "%s: ", argv[0]);
+        perror("unable to read strings file");
         return 1;
     }
 
     // Read strings from file into buffer
     // For short strings, getdelim(3) can be memory inefficient, but this shouldn't matter
     size_t line_buffer_size = 0;
-    while (getdelim(&strings.buf[strings.num++], &line_buffer_size, '\n', strings_file) != -1)
+    while (getdelim(&strings.buf[strings.num], &line_buffer_size, '\n', strings_file) != -1)
     {
+        strings.num++;
         char* line = strings.buf[strings.num - 1];
         size_t line_len = strlen(line);
 
@@ -79,6 +87,7 @@ int main(int argc, char* argv[])
 
             if (new_buf == NULL)
             {
+                fprintf(stderr, "%s: ", argv[0]);
                 perror("unable to increase buffer size");
                 return 1;
             }
@@ -98,6 +107,7 @@ int main(int argc, char* argv[])
     // If getdelim(3) exited with an error
     if (errno)
     {
+        fprintf(stderr, "%s: ", argv[0]);
         perror("getdelim(3) failed");
         return 1;
     }
@@ -105,58 +115,96 @@ int main(int argc, char* argv[])
     // Close input strings file
     fclose(strings_file);
 
-    // TODO: Pack strings into shared memory
+    // Calculate size for shared buffer
+    // See README for information about its composition
+    size_t shared_buffer_size = sizeof(size_t) + strings.num * sizeof(size_t) + total_string_mass;
 
-    free(strings.buf);
-
-    /*
     // Try to create unique IPC key for shared memory
-    key_t ipc_key = ftok(argv[0], 'Q');
+    key_t ipc_key = ftok("/bin/echo", 'Q');
     if (ipc_key == -1)
     {
+        fprintf(stderr, "%s: ", argv[0]);
         perror("ftok(3) failed");
         return 1;
     }
 
-    // Allocate and attach shared memory for strarr instance
-    int shm_id = shmget(ipc_key, sizeof(strarr_t), IPC_CREAT | 0600);
+    // Allocate and attach memory for shared buffer
+    int shm_id = shmget(ipc_key, shared_buffer_size, IPC_CREAT | IPC_EXCL | 0600);
     if (shm_id == -1)
     {
+        fprintf(stderr, "%s: ", argv[0]);
         perror("shmget(2) failed");
         return 1;
     }
-    strarr_t* strings_array = shmat(shm_id, NULL, 0);
-    if (strings_array == NULL)
+    char* shared_buffer = shmat(shm_id, NULL, 0);
+    if (shared_buffer == NULL)
     {
+        fprintf(stderr, "%s: ", argv[0]);
         perror("shmat(2) failed");
         return 1;
     }
-    strarr_construct(strings_array);
 
-    // Detach and free strarr instance on shared memory
-    strarr_destruct(strings_array);
-    if (shmdt(strings_array) == -1)
+    // Pack string count into shared buffer
+    memcpy(shared_buffer, &strings.num, sizeof(size_t));
+
+    // Pack strings into shared buffer
+    size_t string_mass = 0;
+    for (size_t li = 0; li < strings.num; ++li)
     {
+        // The input string
+        char* str = strings.buf[li];
+        size_t str_len = strlen(str);
+
+        // The destination for the shared string
+        char* str_dest = shared_buffer + (1 + strings.num) * sizeof(size_t) + string_mass;
+        size_t str_off = str_dest - shared_buffer;
+
+        // Pack string into string area of shared buffer
+        memcpy(str_dest, str, str_len);
+        str_dest[str_len] = '\0';
+        string_mass += str_len + 1;
+
+        // Pack string offset into lookup table
+        memcpy(shared_buffer + (1 + li) * sizeof(size_t), &str_off, sizeof(size_t));
+    }
+
+    // Free local string buffer
+    free(strings.buf);
+    memset(&strings, 0, sizeof(strings));
+
+    // FIXME: This whole fork thing is just a test
+    pid_t p = fork();
+    if (p == -1)
+    {
+        fprintf(stderr, "%s: ", argv[0]);
+        perror("fork(2) failed");
+        return 1;
+    }
+    else if (p == 0)
+    {
+        // In child
+        execv("./palin", (char* []) { "./palin", "1", "1", NULL });
+        _exit(0);
+    }
+    else
+    {
+        // In parent
+        wait(NULL);
+    }
+
+    // Detach and remove shared buffer memory
+    if (shmdt(shared_buffer) == -1)
+    {
+        fprintf(stderr, "%s: ", argv[0]);
         perror("shmdt(2) failed");
         return 1;
     }
     if (shmctl(shm_id, IPC_RMID, NULL) == -1)
     {
+        fprintf(stderr, "%s: ", argv[0]);
         perror("shmctl(2) failed");
         return 1;
     }
-
-    /*
-    // Try to open strings file for read
-    FILE* strings_file = fopen("../test.in", "r");
-    if (strings_file == NULL)
-    {
-        perror("unable to open file");
-        return 1;
-    }
-
-    fclose(strings_file);
-    */
 
     return 0;
 }
