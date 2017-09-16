@@ -11,3 +11,58 @@ Stages of Master
 - read strings from file into shm
 - kick off a pool of worker processes
     - max out at 19 workers and wait() for a child to terminate
+
+========================================================================================================================
+
+Tyler Filla
+CS 4760
+Assignment 2
+
+Shared Buffer
+=============
+
+The communication between processes is done using System V shared memory. For simplicity, I chose to use a single,
+contiguous buffer of memory attached read-write in `master' and read-only in child `palin' processes. The buffer is
+allocated to the exact size needed to store all input strings and some overhead (see below).
+
+Shared Buffer Format
+====================
+
+The buffer shared from the `master' process to its child `palin' processes has a special structure to improve runtime
+speed at the expense of memory usage. The structure is detailed below with memory usage info for hoare.
+
+      +----------------------------+
+      |        STRING COUNT        |
+  |   |      size_t (8 bytes)      |   |
+  |   +----------------------------+   |
+  |   |                            |   |
+  |   |        LOOKUP TABLE        |   |
+  |   |   size_t[] (8 * N bytes)   |   |
+  |   |                            |   |
+  |   +----------------------------+   |
+  |   |                            |   |
+  |   |                            |   |
+  |   |                            |   |
+  |   |        STRINGS AREA        |   |
+  |   |       (varying size)       |   |
+  |   |                            |   |
+  V   |                            |   V
+      |                            |
+      +----------------------------+
+
+### String Count
+The string count contains a size_t that indicates the total number of strings stored, which is also the size of the
+lookup table.
+
+### Lookup Table
+The lookup table is a contiguous array of <string count> size_t elements. Each element is an absolute offset into the
+shared buffer of the first byte of the first character of the corresponding null-terminated string. For instance, to
+read the string with index M, look at (const char*) &shared_buffer[X], where X is a size_t constructed from the bytes at
+shared_buffer[sizeof(size_t) + M * sizeof(size_t)].
+
+### Strings Area
+This is a blob of tightly packed null-terminated strings. Strings are not necessarily fixed in size, so the total size
+of this area depends highly on their contents.
+
+NOTE: The parent and child processes execute on the same machine, so there is no concern about architecture differences
+in sharing the size_t type.

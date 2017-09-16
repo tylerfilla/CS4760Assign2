@@ -117,9 +117,11 @@ int main(int argc, char* argv[])
 
     // Calculate size for shared buffer
     // See README for information about its composition
+    // In short: number of strings, string lookup table, and string mass area
     size_t shared_buffer_size = sizeof(size_t) + strings.num * sizeof(size_t) + total_string_mass;
 
     // Try to create unique IPC key for shared memory
+    // TODO: Base this on a file we own
     key_t ipc_key = ftok("/bin/echo", 'Q');
     if (ipc_key == -1)
     {
@@ -137,7 +139,7 @@ int main(int argc, char* argv[])
         return 1;
     }
     char* shared_buffer = shmat(shm_id, NULL, 0);
-    if (shared_buffer == NULL)
+    if (shared_buffer == (void*) -1)
     {
         fprintf(stderr, "%s: ", argv[0]);
         perror("shmat(2) failed");
@@ -183,7 +185,7 @@ int main(int argc, char* argv[])
     else if (p == 0)
     {
         // In child
-        execv("./palin", (char* []) { "./palin", "1", "1", NULL });
+        execv("./palin", (char* []) { "./palin", "1", "4999", NULL });
         _exit(0);
     }
     else
