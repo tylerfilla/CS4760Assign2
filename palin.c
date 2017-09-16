@@ -19,6 +19,25 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 
+/**
+ * Determine if an ASCII string is a palindrome.
+ *
+ * @param first A pointer to the first character
+ * @param last A pointer to the last character
+ * @return Nonzero if such is the case, otherwise zero
+ */
+int is_palindrome(const char* first, const char* last)
+{
+    // Recursive base case
+    if (first >= last)
+        return 1;
+
+    if (*first == *last)
+        return is_palindrome(first + 1, last - 1);
+
+    return 0;
+}
+
 int main(int argc, char* argv[])
 {
     if (argc != 3)
@@ -82,6 +101,9 @@ int main(int argc, char* argv[])
 
     char* str = &shared_buffer[p];
     printf("%s\n", str);
+
+    char test[] = "a56g65a";
+    printf("%d\n", is_palindrome(&test[0], &test[6]));
 
     return 0;
 }
