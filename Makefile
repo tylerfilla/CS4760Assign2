@@ -4,6 +4,7 @@
 # Tyler Filla
 #
 
+AR=ar
 CC=cc
 CFLAGS=-Wall -std=c99
 
@@ -12,13 +13,16 @@ all: master palin
 %.o: %.c
 	$(CC) -c $(CFLAGS) $< -o $@
 
-master: master.o
-	$(CC) -o $@ $< $(CFLAGS)
+%.a: %.o
+	$(AR) rcs $@ $<
 
-palin: palin.o
-	$(CC) -o $@ $< $(CFLAGS)
+master: master.o shared.a
+	$(CC) -o $@ $^ $(CFLAGS)
+
+palin: palin.o shared.a
+	$(CC) -o $@ $^ $(CFLAGS)
 
 clean:
-	rm *.o master palin
+	rm *.a *.o master palin
 
 .PHONY: clean

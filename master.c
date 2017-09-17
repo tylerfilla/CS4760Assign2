@@ -17,10 +17,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sys/ipc.h>
-#include <sys/shm.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#include "shared.h"
 
 void handle_sigint(int sig)
 {
@@ -29,11 +29,20 @@ void handle_sigint(int sig)
 
 int main(int argc, char* argv[])
 {
+    image_path = argv[0];
+
     // Handle ^C from terminal
     signal(SIGINT, NULL);
 
+    // TODO: Read command-line arguments
+
+    //
+    // Read Input Strings File
+    //
+
     // Local (non-shared) string buffer
-    // This is working memory for organizing the input strings
+    // This is the working memory for organizing the input strings before we share them
+    // We can't getdelim(3) into shared memory, so we need to use normal memory first
     struct
     {
         char** buf;
@@ -42,9 +51,7 @@ int main(int argc, char* argv[])
     } strings = { NULL, 0, 0 };
 
     // The size of all strings combined, assuming they're packed tightly
-    // In this model, string boundaries are delimited by null terminators
-    // This will be used when allocating the shared memory buffer
-    size_t total_string_mass = 0;
+    size_t total_strings_area_size = 0;
 
     // Allocate initial capacity of ten
     strings.buf = calloc(10, sizeof(char*));
@@ -52,8 +59,7 @@ int main(int argc, char* argv[])
 
     if (strings.buf == NULL)
     {
-        fprintf(stderr, "%s: ", argv[0]);
-        perror("unable to allocate initial buffer capacity");
+        perrorf("%s: unable to allocate initial buffer capacity", image_path);
         return 1;
     }
 
@@ -62,8 +68,7 @@ int main(int argc, char* argv[])
 
     if (strings_file == NULL)
     {
-        fprintf(stderr, "%s: ", argv[0]);
-        perror("unable to read strings file");
+        perrorf("%s: unable to read strings file", image_path);
         return 1;
     }
 
@@ -83,8 +88,8 @@ int main(int argc, char* argv[])
             line_len--;
         }
 
-        // Add packed line length (including null terminator) to the total string mass
-        total_string_mass += line_len + 1;
+        // Add packed line length (including null terminator) to the total strings area size
+        total_strings_area_size += line_len + 1;
 
         // If buffer has reached capacity
         if (strings.num == strings.cap)
@@ -95,8 +100,7 @@ int main(int argc, char* argv[])
 
             if (new_buf == NULL)
             {
-                fprintf(stderr, "%s: ", argv[0]);
-                perror("unable to increase buffer size");
+                perrorf("%s: unable to increase buffer size", image_path);
                 return 1;
             }
 
@@ -115,79 +119,41 @@ int main(int argc, char* argv[])
     // If getdelim(3) exited with an error
     if (errno)
     {
-        fprintf(stderr, "%s: ", argv[0]);
-        perror("getdelim(3) failed");
+        perrorf("%s: getdelim(3) failed", image_path);
         return 1;
     }
 
     // Close input strings file
     fclose(strings_file);
 
-    // Calculate size for shared buffer
-    // See README for information about its composition
-    // In short: number of strings, string lookup table, and string mass area
-    size_t shared_buffer_size = sizeof(size_t) + strings.num * sizeof(size_t) + total_string_mass;
+    // Create shared buffer
+    // See README for information on its structure
+    int shm_id;
+    char* shared_buffer = create_shared_buffer((1 + strings.num) * sizeof(size_t) + total_strings_area_size, &shm_id);
 
-    // Try to create unique IPC key for shared memory
-    // TODO: Base this on a file we own
-    key_t ipc_key = ftok("/bin/echo", 'Q');
-    if (ipc_key == -1)
-    {
-        fprintf(stderr, "%s: ", argv[0]);
-        perror("ftok(3) failed");
-        return 1;
-    }
-
-    // Allocate and attach memory for shared buffer
-    int shm_id = shmget(ipc_key, shared_buffer_size, IPC_CREAT | IPC_EXCL | 0600);
-    if (shm_id == -1)
-    {
-        fprintf(stderr, "%s: ", argv[0]);
-        perror("shmget(2) failed");
-        return 1;
-    }
-    char* shared_buffer = shmat(shm_id, NULL, 0);
-    if (shared_buffer == (void*) -1)
-    {
-        fprintf(stderr, "%s: ", argv[0]);
-        perror("shmat(2) failed");
-        return 1;
-    }
-
-    // Pack string count into shared buffer
-    memcpy(shared_buffer, &strings.num, sizeof(size_t));
+    // Pack total number of strings into shared buffer
+    set_shared_num_strings(shared_buffer, strings.num);
 
     // Pack strings into shared buffer
-    size_t string_mass = 0;
-    for (size_t li = 0; li < strings.num; ++li)
+    size_t current_strings_area_size = 0;
+    for (size_t i = 0; i < strings.num; ++i)
     {
-        // The input string
-        char* str = strings.buf[li];
-        size_t str_len = strlen(str);
-
-        // The destination for the shared string
-        char* str_dest = shared_buffer + (1 + strings.num) * sizeof(size_t) + string_mass;
-        size_t str_off = str_dest - shared_buffer;
-
-        // Pack string into string area of shared buffer
-        memcpy(str_dest, str, str_len);
-        str_dest[str_len] = '\0';
-        string_mass += str_len + 1;
-
-        // Pack string offset into lookup table
-        memcpy(shared_buffer + (1 + li) * sizeof(size_t), &str_off, sizeof(size_t));
+        add_shared_string(shared_buffer, i, strings.num, &current_strings_area_size, strings.buf[i]);
     }
 
     // Free local string buffer
+    // All strings are in shared memory now
     free(strings.buf);
-    memset(&strings, 0, sizeof(strings));
+
+    //
+    // Spawn Worker Processes
+    //
 
     // FIXME: This whole fork thing is just a test
     pid_t p = fork();
     if (p == -1)
     {
-        fprintf(stderr, "%s: ", argv[0]);
-        perror("fork(2) failed");
+        perrorf("%s: fork(2) failed", image_path);
         return 1;
     }
     else if (p == 0)
@@ -202,19 +168,8 @@ int main(int argc, char* argv[])
         wait(NULL);
     }
 
-    // Detach and remove shared buffer memory
-    if (shmdt(shared_buffer) == -1)
-    {
-        fprintf(stderr, "%s: ", argv[0]);
-        perror("shmdt(2) failed");
-        return 1;
-    }
-    if (shmctl(shm_id, IPC_RMID, NULL) == -1)
-    {
-        fprintf(stderr, "%s: ", argv[0]);
-        perror("shmctl(2) failed");
-        return 1;
-    }
+    // Clean up shared memory
+    destroy_shared_buffer(shared_buffer, shm_id);
 
     return 0;
 }
