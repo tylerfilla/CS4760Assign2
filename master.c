@@ -22,8 +22,16 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+void handle_sigint(int sig)
+{
+    // TODO: Handle ^C
+}
+
 int main(int argc, char* argv[])
 {
+    // Handle ^C from terminal
+    signal(SIGINT, NULL);
+
     // Local (non-shared) string buffer
     // This is working memory for organizing the input strings
     struct
