@@ -7,85 +7,78 @@
 #ifndef SHARED_H
 #define SHARED_H
 
-//
-// Utility Functions
-//
+#include <stddef.h>
 
 /**
- * The file path to the executable image of this process. This should be set once.
+ * Get common IPC key.
  */
-extern char* image_path;
+#define get_ipc_key() ftok("/bin/echo", 'Q')
 
 /**
- * Print a formatted string to stderr explaining the meaning of errno.
- *
- * @param format Format string
- * @param ... Format parameters
+ * A bundle of details shared among the master process to its palin children (client) processes. Designed to be
+ * allocated in a shared memory segment (has no pointers to heap-allocated members).
  */
-void perrorf(const char* format, ...);
+typedef struct
+{
+    /** The total number of strings when full. */
+    size_t num_strings;
 
-//
-// Shared Buffer Functions
-//
+    /** The current number of strings appended. */
+    size_t current_num_strings;
+
+    /** The current strings mass. */
+    size_t current_strings_mass;
+
+    /** The size of the string data member below. */
+    size_t string_data_size;
+
+    /** The string data. Prefixed with a lookup table as specified in the README. */
+    char string_data[];
+} client_bundle_t;
 
 /**
- * Utility function to create the shared buffer.
+ * Calculate the size of a client bundle with the given parameters.
  *
- * @param size The shared buffer size
- * @param [out] shm_id The shmid for the memory
- * @return The shared buffer
+ * @param num_strings The total number of strings
+ * @param strings_mass The total tightly-packed size of the strings
+ * @return [size_t] The size of the client bundle object
  */
-char* create_shared_buffer(size_t size, int* shm_id);
+#define sizeof_client_bundle_t(num_strings, strings_mass) (sizeof(client_bundle_t) + (num_strings) * sizeof(size_t) \
+        + (strings_mass))
 
 /**
- * Utility function to destroy the shared buffer.
+ * Construct a client bundle instance.
  *
- * @param shared_buffer The shared buffer
- * @param shm_id The shmid for the memory
+ * @param bundle The client bundle instance
+ * @param num_strings The total number of strings
+ * @param strings_mass The total tightly-packed size of the strings
+ * @return The client bundle instance
  */
-void destroy_shared_buffer(char* shared_buffer, int shm_id);
+client_bundle_t* client_bundle_construct(client_bundle_t* bundle, size_t num_strings, size_t strings_mass);
 
 /**
- * Utility function to get the shared buffer for read.
+ * Destruct a client bundle instance.
  *
- * @return The shared buffer
+ * @param bundle The client bundle instance
+ * @return The client bundle instance
  */
-const char* get_shared_buffer();
+client_bundle_t* client_bundle_destruct(client_bundle_t* bundle);
 
 /**
- * Get the number of strings in the shared buffer.
+ * Append a string to a client bundle instance.
  *
- * @param buffer The shared buffer
- * @return The number of strings
- */
-size_t get_shared_num_strings(const char* buffer);
-
-/**
- * Set the number of strings in the shared buffer.
- *
- * @param buffer The shared buffer
- * @param num_strings The number of strings
- */
-void set_shared_num_strings(char* buffer, size_t num_strings);
-
-/**
- * Get a particular string in the shared buffer.
- *
- * @param buffer The shared buffer
- * @param index The string index
- * @return The string
- */
-const char* get_shared_string(const char* buffer, size_t index);
-
-/**
- * Set a particular string in the shared buffer.
- *
- * @param buffer The shared buffer
- * @param index The string index
- * @param count The current total number of strings
- * @param mass A pointer to the current total size of the strings area
+ * @param bundle The bundle
  * @param string The string
  */
-void add_shared_string(char* buffer, size_t index, size_t count, size_t* mass, const char* string);
+void client_bundle_append_string(client_bundle_t* bundle, const char* string);
+
+/**
+ * Get the string at the given index from a client bundle instance.
+ *
+ * @param bundle The bundle
+ * @param index The index
+ * @return The string
+ */
+const char* client_bundle_get_string(const client_bundle_t* bundle, size_t index);
 
 #endif // #ifndef SHARED_H

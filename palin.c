@@ -19,7 +19,13 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 
+#include "perrorf.h"
 #include "shared.h"
+
+/**
+ * The file path to the executable image of this process.
+ */
+static char* image_path;
 
 /**
  * Determine if an ASCII string is a palindrome.
@@ -28,7 +34,7 @@
  * @param last A pointer to the last character (must be >= first)
  * @return Nonzero if such is the case, otherwise zero
  */
-int is_palindrome(const char* first, const char* last)
+static int is_palindrome(const char* first, const char* last)
 {
     // Recursive base case
     if (first >= last)
@@ -57,7 +63,7 @@ int main(int argc, char* argv[])
     size_t seq = strtoul(argv[1], &fail_seq, 10);
     if (*fail_seq != '\0')
     {
-        fprintf(stderr, "invalid seq: %s\n", argv[1]);
+        fprintf(stderr, "%s: invalid seq: %s\n", image_path, argv[1]);
         return 1;
     }
 
@@ -66,28 +72,46 @@ int main(int argc, char* argv[])
     size_t str = strtoul(argv[2], &fail_str, 10);
     if (*fail_str != '\0')
     {
-        fprintf(stderr, "invalid str: %s\n", argv[2]);
+        fprintf(stderr, "%s: invalid str: %s\n", image_path, argv[2]);
         return 1;
     }
 
-    // Connect to shared buffer
-    const char* shared_buffer = get_shared_buffer();
-
-    // Get total number of strings
-    size_t num_strings = get_shared_num_strings(shared_buffer);
-
-    // Validate assigned string index
-    if (str >= num_strings)
+    // Get common IPC key
+    key_t ipc_key = get_ipc_key();
+    if (ipc_key == -1)
     {
-        fprintf(stderr, "str out of range: %ld\n", str);
+        perrorf("%s: ftok(3) failed", image_path);
         return 1;
     }
 
-    // Get desired string
-    const char* string = get_shared_string(shared_buffer, str);
+    // Attach shared memory as read only and obtain client bundle
+    int shm_id = shmget(ipc_key, 0, 0);
+    if (shm_id == -1)
+    {
+        perrorf("%s: shmget(2) failed", image_path);
+        return 1;
+    }
+    const client_bundle_t* bundle = shmat(shm_id, NULL, SHM_RDONLY);
+    if (bundle == (void*) -1)
+    {
+        perrorf("%s: shmat(2) failed", image_path);
+        return 1;
+    }
+
+    // Validate string index assigned to this palin instance
+    // Probably not necessary in practice, but it can't hurt
+    if (str >= bundle->num_strings)
+    {
+        fprintf(stderr, "%s: str out of range: %ld\n", image_path, str);
+        return 1;
+    }
+
+    // Get assigned string
+    const char* string = client_bundle_get_string(bundle, str);
     size_t string_length = strlen(string);
 
-    printf("%s is palindrome? %d\n", string, is_palindrome(string, string + string_length - 1));
+    // FIXME: This is just for development
+    fprintf(stderr, "\"%s\": %s\n", string, is_palindrome(string, string + string_length - 1) ? "yes" : "no");
 
     return 0;
 }

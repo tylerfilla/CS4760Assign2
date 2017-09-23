@@ -13,16 +13,25 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/ipc.h>
+#include <sys/shm.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "perrorf.h"
 #include "shared.h"
 
-void handle_sigint(int sig)
+#define MAX_WORKERS 19
+
+/**
+ * The file path to the executable image of this process.
+ */
+static char* image_path;
+
+static void handle_sigint(int sig)
 {
     // TODO: Handle ^C
 }
@@ -34,7 +43,17 @@ int main(int argc, char* argv[])
     // Handle ^C from terminal
     signal(SIGINT, NULL);
 
-    // TODO: Read command-line arguments
+    int opt = -1;
+    while ((opt = getopt(argc, argv, "f:")) != -1)
+    {
+        switch (opt)
+        {
+        case 'f':
+            break;
+        default:
+            break;
+        }
+    }
 
     //
     // Read Input Strings File
@@ -43,15 +62,21 @@ int main(int argc, char* argv[])
     // Local (non-shared) string buffer
     // This is the working memory for organizing the input strings before we share them
     // We can't getdelim(3) into shared memory, so we need to use normal memory first
+    // Additionally, this lets use allocate exactly the amount of shared memory necessary
     struct
     {
+        /** String data buffer */
         char** buf;
-        size_t cap;
-        size_t num;
-    } strings = { NULL, 0, 0 };
 
-    // The size of all strings combined, assuming they're packed tightly
-    size_t total_strings_area_size = 0;
+        /** Buffer capacity. */
+        size_t cap;
+
+        /** Current number of strings. */
+        size_t num;
+
+        /** Current mass of strings (size of all strings packed tightly, separated by null characters). */
+        size_t mass;
+    } strings = { NULL, 0, 0, 0 };
 
     // Allocate initial capacity of ten
     strings.buf = calloc(10, sizeof(char*));
@@ -88,8 +113,8 @@ int main(int argc, char* argv[])
             line_len--;
         }
 
-        // Add packed line length (including null terminator) to the total strings area size
-        total_strings_area_size += line_len + 1;
+        // Add packed line length (including null terminator) to the total strings mass
+        strings.mass += line_len + 1;
 
         // If buffer has reached capacity
         if (strings.num == strings.cap)
@@ -104,7 +129,7 @@ int main(int argc, char* argv[])
                 return 1;
             }
 
-            // Zero out new elements in buffer and start using it
+            // Zero out any new elements in buffer and use it
             size_t cap_diff = new_cap - strings.cap;
             memset(new_buf + cap_diff, 0, cap_diff * sizeof(char*));
             strings.buf = new_buf;
@@ -126,50 +151,78 @@ int main(int argc, char* argv[])
     // Close input strings file
     fclose(strings_file);
 
-    // Create shared buffer
-    // See README for information on its structure
-    int shm_id;
-    char* shared_buffer = create_shared_buffer((1 + strings.num) * sizeof(size_t) + total_strings_area_size, &shm_id);
+    // Get common IPC key
+    key_t ipc_key = get_ipc_key();
+    if (ipc_key == -1)
+    {
+        perrorf("%s: ftok(3) failed", image_path);
+        return 1;
+    }
 
-    // Pack total number of strings into shared buffer
-    set_shared_num_strings(shared_buffer, strings.num);
+    // Allocate and construct client bundle in shared memory
+    int shmid = shmget(ipc_key, sizeof_client_bundle_t(strings.num, strings.mass), IPC_CREAT | IPC_EXCL | 0600);
+    if (shmid == -1)
+    {
+        perrorf("%s: shmget(2) failed", image_path);
+        return 1;
+    }
+    client_bundle_t* bundle = shmat(shmid, NULL, 0);
+    if (bundle == (void*) -1)
+    {
+        perrorf("%s: shmat(2) failed", image_path);
+        return 1;
+    }
+    client_bundle_construct(bundle, strings.num, strings.mass);
 
-    // Pack strings into shared buffer
-    size_t current_strings_area_size = 0;
+    // Copy strings into client bundle
     for (size_t i = 0; i < strings.num; ++i)
     {
-        add_shared_string(shared_buffer, i, strings.num, &current_strings_area_size, strings.buf[i]);
+        client_bundle_append_string(bundle, strings.buf[i]);
     }
 
     // Free local string buffer
-    // All strings are in shared memory now
+    // All strings are stored in shared memory now
     free(strings.buf);
 
     //
     // Spawn Worker Processes
     //
+    // Work is assigned in a linear fashion. Each string gets assigned to an open slot or the whole things waits until a
+    // slot opens. The number of running palin instances at any time is capped at the value MAX_WORKERS (hardcoded to 19
+    // as per the assignment).
+    //
 
-    // FIXME: This whole fork thing is just a test
-    pid_t p = fork();
-    if (p == -1)
+    // The pids for the running worker processes ("slots")
+    // A value of -1 indicates the slot is open (a process can be spawned)
+    pid_t workers[MAX_WORKERS];
+
+    // Handle all strings
+    for (size_t str = 0; str < strings.num; ++str)
     {
-        perrorf("%s: fork(2) failed", image_path);
+        // Find next available worker slot
+        // This implements the maximum cap on the number of concurrent palin instances
+        int slot = MAX_WORKERS;
+        for (; slot < MAX_WORKERS; ++slot)
+        {
+            if (workers[slot] == -1)
+                break;
+        }
+
+
+    }
+
+    // Destruct client bundle and detach the shared memory
+    client_bundle_destruct(bundle);
+    if (shmdt(bundle) == -1)
+    {
+        perrorf("%s: shmdt(2) failed", image_path);
         return 1;
     }
-    else if (p == 0)
+    if (shmctl(shmid, IPC_RMID, NULL) == -1)
     {
-        // In child
-        execv("./palin", (char* []) { "./palin", "1", "4999", NULL });
-        _exit(0);
+        perrorf("%s: shmctl(2) failed", image_path);
+        return 1;
     }
-    else
-    {
-        // In parent
-        wait(NULL);
-    }
-
-    // Clean up shared memory
-    destroy_shared_buffer(shared_buffer, shm_id);
 
     return 0;
 }
