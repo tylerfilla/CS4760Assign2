@@ -85,7 +85,7 @@ int main(int argc, char* argv[])
     }
 
     // Open input strings file for read
-    FILE* strings_file = fopen("test.in", "r"); // TODO: Get file path from cmd args
+    FILE* strings_file = fopen("../test.in", "r"); // TODO: Get file path from cmd args
 
     if (strings_file == NULL)
     {
@@ -211,7 +211,7 @@ int main(int argc, char* argv[])
                 break;
         }
 
-        // If no seq number is available, then the workers don't seem to be dying
+        // If no seq number is available, then either the workers are zombies or there's a fatal inconsistency
         if (seq == MAX_WORKERS)
             return 1;
 

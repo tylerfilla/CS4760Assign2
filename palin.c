@@ -12,6 +12,7 @@
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,7 +41,34 @@ static int is_palindrome(const char* first, const char* last)
     if (first >= last)
         return 1;
 
-    if (*first == *last)
+    // Skip all non-alphanumeric characters
+    while (first <= last && !isalnum(*first))
+    {
+        first++;
+    }
+    while (first <= last && !isalnum(*last))
+    {
+        last--;
+    }
+
+    // Quick bounds check
+    // If the above step (skipping non-alphanumerics) resulted in first >= last, then default to yes
+    if (first >= last)
+        return 1;
+
+    // Ignore letter case
+    int c_first = *first;
+    int c_last = *last;
+    if (isalpha(c_first))
+    {
+        c_first = tolower(c_first);
+    }
+    if (isalpha(c_last))
+    {
+        c_last = tolower(c_last);
+    }
+
+    if (c_first == c_last)
         return is_palindrome(first + 1, last - 1);
 
     return 0;
