@@ -11,10 +11,21 @@
 
 client_bundle_t* client_bundle_construct(client_bundle_t* self, size_t num_strings, size_t strings_mass)
 {
+    self->num_workers = 0;
+
+    for (int i = 0; i < MAX_WORKERS; ++i)
+    {
+        self->worker_states[i] = WORKER_STATE_READY;
+        self->worker_flags[i] = 0;
+    }
+
+    self->worker_turn = -1;
     self->num_strings = num_strings;
     self->current_num_strings = 0;
     self->string_data_size = num_strings * sizeof(size_t) + strings_mass;
+
     memset(self->string_data, 0, self->string_data_size);
+
     return self;
 }
 

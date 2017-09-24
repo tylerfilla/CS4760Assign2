@@ -183,31 +183,29 @@ int main(int argc, char* argv[])
     // Loop through all strings
     for (size_t str = 0; str < strings.num; ++str)
     {
-        // If number of workers is at max, wait for one to die and try again
+        // If number of workers is at max, wait for one child to die
+        // In the meantime, at least one worker will transition to finished
         if (bundle->num_workers == MAX_WORKERS)
         {
-            int stat;
-            wait(&stat);
-
-            // Reclaim finished workers
-            for (int seq = 0; seq < MAX_WORKERS; ++seq)
-            {
-                if (bundle->worker_states[seq] == 2)
-                {
-                    bundle->worker_states[seq] = 0;
-                    bundle->num_workers--;
-                }
-            }
-
-            continue;
+            wait(NULL);
+            bundle->num_workers--;
         }
 
-        // Find an available seq number
-        // These can be reused when the associated worker is finished
+        // Transition finished workers to ready state
+        for (int i = 0; i < MAX_WORKERS; ++i)
+        {
+            if (bundle->worker_states[i] == WORKER_STATE_FINISHED)
+            {
+                bundle->worker_states[i] = WORKER_STATE_READY;
+            }
+        }
+
+        // Find lowest available seq number (these get reused as workers finish)
+        // The worker will hold onto this value for its entire life
         int seq = 0;
         for (; seq < MAX_WORKERS; ++seq)
         {
-            if (bundle->worker_states[seq] == 0)
+            if (bundle->worker_states[seq] == WORKER_STATE_READY)
                 break;
         }
 
@@ -246,7 +244,7 @@ int main(int argc, char* argv[])
         {
             // Currently in master after successful fork
             // Mark worker as running and continue
-            bundle->worker_states[seq] = 1;
+            bundle->worker_states[seq] = WORKER_STATE_RUNNING;
             bundle->num_workers++;
         }
     }

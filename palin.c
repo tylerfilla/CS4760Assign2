@@ -136,8 +136,8 @@ int main(int argc, char* argv[])
     // FIXME: This output is just for development
     fprintf(stderr, "PALINDROME \"%s\": %s\n", string, palin ? "yes" : "no");
 
-    // Mark this worker as ready
-    bundle->worker_states[seq] = 2;
+    // Mark this worker as finished
+    bundle->worker_states[seq] = WORKER_STATE_FINISHED;
 
     return 0;
 }

@@ -14,6 +14,10 @@
  */
 #define MAX_WORKERS 19
 
+#define WORKER_STATE_READY 0
+#define WORKER_STATE_RUNNING 1
+#define WORKER_STATE_FINISHED 2
+
 /**
  * Get common IPC key.
  */
