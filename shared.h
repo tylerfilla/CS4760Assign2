@@ -18,6 +18,10 @@
 #define WORKER_STATE_RUNNING 1
 #define WORKER_STATE_FINISHED 2
 
+#define WORKER_FLAG_IDLE 0
+#define WORKER_FLAG_WANT_IN 1
+#define WORKER_FLAG_IN_CS 2
+
 /**
  * Get common IPC key.
  */

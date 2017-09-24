@@ -50,7 +50,7 @@ static void do_cleanup();
 
 static void handle_sigalrm(int sig)
 {
-    fprintf(stderr, "Timeout encountered\n");
+    fprintf(stderr, "%s: timeout encountered\n", image_path);
 
     // For simplicity, we treat the timeout feature as an interrupt mechanism
     // Send SIGINT to all in this process group
@@ -62,7 +62,7 @@ static void handle_sigalrm(int sig)
 
 static void handle_sigint(int sig)
 {
-    fprintf(stderr, "Execution interrupted\n");
+    fprintf(stderr, "%s: execution interrupted\n", image_path);
     exit(2);
 }
 
