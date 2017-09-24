@@ -1,41 +1,145 @@
-Notes
-- palin processes are kicked off by master
-- each palin process handles one string and then dies
-- the master process enforces upper bound on # of palin processes <= 19
-- when master process detects a palin process dies, it reuses its sequential id
-
-Stages of Master
-- set up signals
-- parse input options
-- prepare shared memory
-- read strings from file into shm
-- kick off a pool of worker processes
-    - max out at 19 workers and wait() for a child to terminate
-
-========================================================================================================================
 
 Tyler Filla
 CS 4760
 Assignment 2
 
-Shared Buffer
+Synopsis
+========
+
+There are two programs as part of this assignment: master and palin. The master program is user-facing, while the palin
+program is intended for machine use only (though nothing stops you from using it manually if you follow the protocol).
+
+Once launched, the master process follows roughly these steps:
+1. Handles command-line arguments
+2. Sets up system event handlers (signals and timer*)
+3. Read strings input file
+4. Sets up a shared memory region with these strings
+5. Launches the palin program repeatedly to process the strings
+
+* A configurable timer is provided to prevent lengthy computation.
+
+The palin processes all follow these steps:
+1. Handle command-line arguments
+2. Connect to the shared memory region
+3. Process their assigned strings and generate results
+4. Arbitrate access to and write results to the two output files, palin.out and nopalin.out
+
+NOTE: As per the assignment, step 4 is performed 5 times, which directly results in each string being written to its
+corresponding output file 5 times. This is intentional to satisfy the requirement.
+
+Directory Tree
+==============
+
+[root]
+ |
+ +-- Makefile
+ |
+ +-- master.c   (the main file for the master program)
+ |
+ +-- palin.c    (the main file for the palin program)
+ |
+ +-- perrorf.h  (a utility for formatting perror messages)
+ |
+ +-- README
+ |
+ +-- shared.c   (the main file for a library that takes care of commonalities)
+ |
+ +-- shared.h   (the corresponding header file for shared.c)
+
+Building
+========
+
+To build the project, run the following:
+
+$ make
+
+Running
+=======
+
+To run the project, use the following commands:
+
+Documentation
+-------------
+
+For help, run the following:
+
+$ ./master -h
+
+Examples
+--------
+
+$ ./master
+
+This will run master with defaults:
+- Input file: strings.in
+- Timeout: 60 seconds (60000 ms)
+
+$ ./master -f file.in
+
+This will run master with params:
+- Input file: file.in
+- Timeout: 60 seconds
+
+$ ./master -t 30000 -f file.in
+
+This will run master with params:
+- Input file: file.in
+- Timeout: 30 seconds (30000 ms)
+
+Cleanup
+=======
+
+To clean up after a build, run the following:
+
+$ make clean
+
+Client Bundle
 =============
 
-The communication between processes is done using System V shared memory. For simplicity, I chose to use a single,
-contiguous buffer of memory attached read-write in `master' and read-only in child `palin' processes. The buffer is
-allocated to the exact size needed to store all input strings and some overhead (see below).
+The communication between processes is done using System V shared memory. For simplicity, this memory is viewed as a C
+structure, referred to as the client bundle. It contains fields pertaining to work distribution, synchronization, and
+string data. These are elaborated upon below.
 
-Shared Buffer Format
-====================
+Work Distribution
+-----------------
 
-The buffer shared from the `master' process to its child `palin' processes has a special structure to improve runtime
-speed at the expense of memory usage. The structure is detailed below with memory usage info for hoare.
+The master program supports a variable number of input strings (even more than the maximum number of child processes),
+so the strings need to be mapped to the set of palin processes (also interchangeably called "workers"). This is done by
+a very simple work distribution algorithm that saturates the maximum number of children (MAX_WORKERS) and wait(2)'s for
+children to die before trying to distribute strings. The client bundle has an array of integers (slots) that track the
+state of workers: one of READY, RUNNING, or FINISHED. Before spawning a worker (fork(2)'ing and exec(3)'ing the palin
+program), the master process assigns a number (seq) to the worker based on availability and uses it as an index into the
+slot array. The slot for the worker is set to RUNNING. When the child process is finished, it sets its slot to FINISHED.
+When master needs another worker, it sets all FINISHED slots to READY and uses the index of the first READY slot as the
+seq number for the next worker. A seq number assigned to a worker is guaranteed to be valid until the worker declares
+itself FINISHED, after which it must promptly terminate.
+
+Meanwhile, each spawned worker is assigned a string index. These are never reused, so this is much simpler. See the
+section below on string data for more information.
+
+Synchronization
+---------------
+
+The synchronization algorithm used is based on the "multiple process synchronization algorithm for critical section
+problem" as specified in the assignment and handout. The flags and turn are stored in the client bundle as the fields
+worker_flags and worker_turn, respectively.
+
+String Data
+-----------
+
+The master program supports a variable number of input strings (even more than the maximum number of palin processes),
+so a number of measurements are taken on a heap-allocated copy of all the strings before they are packed into the client
+bundle. These measurements (named (1) count and (2) mass: (1) the total number of strings and (2) the total memory size
+of the null-terminated strings packed tightly, end-to-end, respectively) are used to build an exactly-sized data buffer
+to share strings to workers. This places no theoretical maximum size on any one string and can accommodate a string of
+length 1 with as few as two bytes (sans overhead, see below).
+
+Packing the strings in this fashion alone would cause an immense performance hit for many strings, as workers would be
+forced to count null terminators. To counter this, a lookup table technique is used. An array of size_t values is copied
+just before the section of packed strings as seen in this diagram:
 
       +----------------------------+
-      |        STRING COUNT        |
-  |   |      size_t (8 bytes)      |   |
-  |   +----------------------------+   |
-  |   |                            |   |
+      |                            |
   |   |        LOOKUP TABLE        |   |
   |   |   size_t[] (8 * N bytes)   |   |
   |   |                            |   |
@@ -50,17 +154,15 @@ speed at the expense of memory usage. The structure is detailed below with memor
       |                            |
       +----------------------------+
 
-### String Count
-The string count contains a size_t that indicates the total number of strings stored, which is also the size of the
-lookup table.
+### Lookup Table ###
 
-### Lookup Table
 The lookup table is a contiguous array of <string count> size_t elements. Each element is an absolute offset into the
 shared buffer of the first byte of the first character of the corresponding null-terminated string. For instance, to
 read the string with index M, look at (const char*) &shared_buffer[X], where X is a size_t constructed from the bytes at
 shared_buffer[sizeof(size_t) + M * sizeof(size_t)].
 
-### Strings Area
+### Strings Area ###
+
 This is a blob of tightly packed null-terminated strings. Strings are not necessarily fixed in size, so the total size
 of this area depends highly on their contents.
 
