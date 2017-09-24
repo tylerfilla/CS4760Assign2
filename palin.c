@@ -21,6 +21,7 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "perrorf.h"
 #include "shared.h"
@@ -86,9 +87,25 @@ static int is_palindrome(const char* first, const char* last)
     return 0;
 }
 
+/**
+ * Sleep for a random number of microseconds in the inclusive interval [a, b], where a and b are times in seconds.
+ *
+ * @param a The lower bound (in seconds)
+ * @param b The upper bound (in seconds)
+ * @return Zero on success, otherwise nonzero + errno
+ */
+static int sleep_us_between_s(unsigned int a, unsigned int b)
+{
+    unsigned long a_us = a * 1000000;
+    unsigned long b_us = b * 1000000;
+    unsigned long sleep_us = rand() % (b_us - a_us) + a_us; // NOLINT
+    fprintf(stderr, "sleep for %ld\n", sleep_us);
+    return usleep((__useconds_t) sleep_us);
+}
+
 static void handle_sigint(int sig)
 {
-    fprintf(stderr, "%s #%d interrupted\n", image_path, seq);
+    fprintf(stderr, "%s #%d (pid %d) interrupted\n", image_path, seq, getpid());
     exit(2);
 }
 
@@ -125,6 +142,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // Seed pRNG with data hopefully unique to this palin instance
+    srand((unsigned int) ((int) time(NULL) ^ (int) getpid()));
+
     // Handle SIGINT signal (most likely triggered by terminal ^C key combo)
     struct sigaction sigaction_sigint = {};
     sigaction_sigint.sa_handler = &handle_sigint;
@@ -156,14 +176,24 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    /////////////////////
+    // Prepare results //
+    /////////////////////
+
     // Determine if assigned string is a palindrome
     const char* string = client_bundle_get_string(bundle, str);
     int palin = is_palindrome(string, string + strlen(string) - 1);
+
+    const char* out_filename = palin ? "palin.out" : "nopalin.out";
 
     // Generate output string
     // This string will be written into a file depending on the value of palin
     char output[256];
     snprintf(output, sizeof(output), "%d %ld %s\n", getpid(), str, string);
+
+    //////////////////////////////
+    // Attempt to write results //
+    //////////////////////////////
 
     /*
     // ENTER CRITICAL SECTION (do this 5 times)
@@ -180,12 +210,72 @@ int main(int argc, char* argv[])
     // LEAVE CRITICAL SECTION
     */
 
+    // The constraints here are a bit exaggerated as per the instructions
+    // This enters and exits the critical section 5 times, thus printing each result 5 times
     for (int trial = 0; trial < 5; ++trial)
     {
-        fprintf(stderr, "%d trial %d\n", seq, trial);
-    }
+        fprintf(stderr, "%s #%d (pid %d) ready for critical section at %ld\n", image_path, seq, getpid(), time(NULL));
 
-    usleep((__useconds_t) (rand() % 20000000));
+#define IDLE 0
+#define WANT_IN 1
+#define IN_CS 2
+
+        {
+            int j; // Local to each process
+            //do
+            //{
+            do
+            {
+                bundle->worker_flags[seq] = WANT_IN; // Raise my flag
+                j = bundle->worker_turn; // Set local variable
+
+                while (j != seq)
+                    j = (bundle->worker_flags[j] != IDLE) ? bundle->worker_turn : (j + 1) % MAX_WORKERS;
+
+                // Declare intention to enter critical section
+                bundle->worker_flags[seq] = IN_CS;
+
+                // Check that no one else is in critical section
+                for (j = 0; j < MAX_WORKERS; j++)
+                    if ((j != seq) && (bundle->worker_flags[j] == IN_CS))
+                        break;
+
+            } while ((j < MAX_WORKERS) ||
+                    (bundle->worker_turn != seq && bundle->worker_flags[bundle->worker_turn] != IDLE));
+
+            // Assign turn to self and enter critical section
+            bundle->worker_turn = seq;
+
+            // ENTER CRITICAL SECTION
+
+            fprintf(stderr, "%s #%d (pid %d) entered its critical section at %ld\n", image_path, seq, getpid(),
+                    time(NULL));
+
+            // Sleep for a duration in [0, 2] seconds
+            sleep_us_between_s(0, 2);
+
+            fprintf(stderr, "%d would write to file", seq);
+
+            // Sleep once more for a duration in [0, 2] seconds
+            sleep_us_between_s(0, 2);
+
+            // LEAVE CRITICAL SECTION
+
+            // Exit section
+            j = (bundle->worker_turn + 1) % MAX_WORKERS;
+            while (bundle->worker_flags[j] == IDLE)
+                j = (j + 1) % MAX_WORKERS;
+
+            // Assign turn to next waiting process; change own flag to idle
+            bundle->worker_turn = j;
+            bundle->worker_flags[seq] = IDLE;
+
+            //remainder_section();
+            //} while (1);
+        }
+
+        fprintf(stderr, "%s #%d (pid %d) left its critical section at %ld\n", image_path, seq, getpid(), time(NULL));
+    }
 
     // Mark this worker as finished
     bundle->worker_states[seq] = WORKER_STATE_FINISHED;
