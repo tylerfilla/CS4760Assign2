@@ -91,7 +91,7 @@ typedef struct
 client_bundle_t* client_bundle_construct(client_bundle_t* bundle, size_t num_strings, size_t strings_mass);
 
 /**
- * Destruct a client bundle instance.
+ * Destruct a client bundle instance. NOPs with NULL input.
  *
  * @param bundle The client bundle instance
  * @return The client bundle instance

@@ -13,47 +13,154 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include "perrorf.h"
 #include "shared.h"
 
-// TODO: Find all ways master can exit and destroy the shared memory
+#define DEFAULT_STRINGS_FILENAME "strings.in"
 
 /**
  * The file path to the executable image of this process.
  */
-static char* image_path;
+static char* image_path = NULL;
+
+/**
+ * The client bundle instance.
+ */
+static client_bundle_t* bundle = NULL;
+
+/**
+ * The shared memory identifier.
+ */
+static int shmid = -1;
+
+/**
+ * Handle all manual cleanup operations.
+ */
+static void do_cleanup();
+
+static void handle_sigalrm(int sig)
+{
+    fprintf(stderr, "\nTimeout; exiting with errors\n");
+    exit(2);
+}
 
 static void handle_sigint(int sig)
 {
-    // TODO: Handle ^C
+    fprintf(stderr, "\nKeyboard interrupt; exiting with errors\n");
+    exit(2);
+}
+
+static void print_help(FILE* dest)
+{
+    fprintf(dest, "Usage: %s [option...]\n\n", image_path);
+    fprintf(dest, "Supported options:\n");
+    fprintf(dest, "    -f <file>   Read strings from <file> (defaults to strings.in)\n");
+    fprintf(dest, "    -h          Display this information\n");
+    fprintf(dest, "    -t <time>   Set timeout to <time> milliseconds (default 60000)\n");
+}
+
+static void print_usage(FILE* dest)
+{
+    fprintf(dest, "Usage: %s [option...]\n", image_path);
+    fprintf(dest, "Try `%s -h' for more information.\n", image_path);
 }
 
 int main(int argc, char* argv[])
 {
     image_path = argv[0];
 
-    // Handle ^C from terminal
-    signal(SIGINT, NULL);
+    ///////////////////////////////////
+    // Handle command-line arguments //
+    ///////////////////////////////////
+
+    int print_quit_help = 0;
+    char* strings_filename = NULL;
+    unsigned long time_limit = 60000;
 
     int opt;
-    while ((opt = getopt(argc, argv, "f:")) != -1)
+    while ((opt = getopt(argc, argv, "hf:t:")) != -1)
     {
         switch (opt)
         {
+        case 'h':
+            print_quit_help = 1;
+            break;
         case 'f':
+            strings_filename = strdup(optarg);
+            break;
+        case 't':
+            time_limit = strtoul(optarg, NULL, 10);
             break;
         default:
-            break;
+            print_usage(stderr);
+            return 1;
         }
     }
+
+    if (print_quit_help)
+    {
+        print_help(stdout);
+        return 1;
+    }
+
+    // Use default filename if none provided
+    if (strings_filename == NULL)
+    {
+        strings_filename = strdup(DEFAULT_STRINGS_FILENAME);
+    }
+
+    ///////////////////////////
+    // Set up event handlers //
+    ///////////////////////////
+
+    // Set a cleanup handler for graceful modes of termination
+    atexit(do_cleanup);
+
+    // Handle SIGALRM signal (triggered by timeout)
+    struct sigaction sigaction_sigalrm = {};
+    sigaction_sigalrm.sa_handler = &handle_sigalrm;
+    if (sigaction(SIGALRM, &sigaction_sigalrm, NULL))
+    {
+        perrorf("%s: cannot handle SIGALRM: sigaction(2) failed", image_path);
+        return 1;
+    }
+
+    // Handle SIGINT signal (most likely triggered by terminal ^C key combo)
+    struct sigaction sigaction_sigint = {};
+    sigaction_sigint.sa_handler = &handle_sigint;
+    if (sigaction(SIGINT, &sigaction_sigint, NULL))
+    {
+        perrorf("%s: cannot handle SIGINT: sigaction(2) failed", image_path);
+        return 1;
+    }
+
+    // Split time limit into seconds and milliseconds
+    unsigned long time_limit_seconds = time_limit / 1000;
+    unsigned long time_limit_milliseconds = time_limit % 1000;
+
+    // Set timeout after time_limit milliseconds
+    struct itimerval timer = {};
+    timer.it_value.tv_sec = time_limit_seconds;
+    timer.it_value.tv_usec = time_limit_milliseconds * 1000;
+    if (setitimer(ITIMER_REAL, &timer, NULL))
+    {
+        perrorf("%s: cannot set timeout: setitimer(2) failed", image_path);
+        return 1;
+    }
+
+    /////////////////////////////
+    // Read strings input file //
+    /////////////////////////////
 
     // Local (non-shared) string buffer
     // This is the working memory for organizing the input strings before we share them
@@ -85,13 +192,16 @@ int main(int argc, char* argv[])
     }
 
     // Open input strings file for read
-    FILE* strings_file = fopen("../test.in", "r"); // TODO: Get file path from cmd args
+    FILE* strings_file = fopen(strings_filename, "r");
 
     if (strings_file == NULL)
     {
-        perrorf("%s: unable to read strings file", image_path);
+        perrorf("%s: unable to read strings file: %s", image_path, strings_filename);
+        free(strings_filename);
         return 1;
     }
+
+    free(strings_filename);
 
     // Read strings from file into buffer
     // For short strings, getdelim(3) can be memory inefficient, but this shouldn't matter
@@ -147,6 +257,10 @@ int main(int argc, char* argv[])
     // Close input strings file
     fclose(strings_file);
 
+    ////////////////////////////////////////////
+    // Set up shared memory and client bundle //
+    ////////////////////////////////////////////
+
     // Get common IPC key
     key_t ipc_key = get_ipc_key();
     if (ipc_key == -1)
@@ -156,13 +270,13 @@ int main(int argc, char* argv[])
     }
 
     // Allocate and construct client bundle in shared memory
-    int shmid = shmget(ipc_key, sizeof_client_bundle_t(strings.num, strings.mass), IPC_CREAT | IPC_EXCL | 0600);
+    shmid = shmget(ipc_key, sizeof_client_bundle_t(strings.num, strings.mass), IPC_CREAT | IPC_EXCL | 0600);
     if (shmid == -1)
     {
         perrorf("%s: shmget(2) failed", image_path);
         return 1;
     }
-    client_bundle_t* bundle = shmat(shmid, NULL, 0);
+    bundle = shmat(shmid, NULL, 0);
     if (bundle == (void*) -1)
     {
         perrorf("%s: shmat(2) failed", image_path);
@@ -179,6 +293,10 @@ int main(int argc, char* argv[])
     // Free local string buffer
     // All strings are stored in shared memory now
     free(strings.buf);
+
+    /////////////////////
+    // Distribute work //
+    /////////////////////
 
     // Loop through all strings
     for (size_t str = 0; str < strings.num; ++str)
@@ -249,23 +367,32 @@ int main(int argc, char* argv[])
         }
     }
 
+    return 0;
+}
+
+static void do_cleanup()
+{
+    ////////////////////////
+    // Clean up resources //
+    ////////////////////////
+
     // Wait for all children to die
     while (wait(NULL) > 0)
     {
     }
 
-    // Destruct client bundle and detach shared memory
+    // Destruct client bundle
     client_bundle_destruct(bundle);
-    if (shmdt(bundle) == -1)
+
+    // Detach and deallocate shared memory as necessary
+    if (bundle != NULL && shmdt(bundle) == -1)
     {
         perrorf("%s: shmdt(2) failed", image_path);
-        return 1;
+        return;
     }
-    if (shmctl(shmid, IPC_RMID, NULL) == -1)
+    if (shmid != -1 && shmctl(shmid, IPC_RMID, NULL) == -1)
     {
         perrorf("%s: shmctl(2) failed", image_path);
-        return 1;
+        return;
     }
-
-    return 0;
 }

@@ -19,6 +19,7 @@
 
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <unistd.h>
 
 #include "perrorf.h"
 #include "shared.h"
@@ -26,7 +27,7 @@
 /**
  * The file path to the executable image of this process.
  */
-static char* image_path;
+static char* image_path = NULL;
 
 /**
  * Determine if an ASCII string is a palindrome.
@@ -133,8 +134,23 @@ int main(int argc, char* argv[])
     const char* string = client_bundle_get_string(bundle, str);
     int palin = is_palindrome(string, string + strlen(string) - 1);
 
+    // Generate output string
+    // This string will be written into a file depending on the value of palin
+    char output[256];
+    snprintf(output, sizeof(output), "%d %ld %s\n", getpid(), str, string);
+
+    // ENTER CRITICAL SECTION (do this 5 times)
+
+    usleep((__useconds_t) (rand() % 2000000));
+
+    // WRITE TO FILE
+
     // FIXME: This output is just for development
-    fprintf(stderr, "PALINDROME \"%s\": %s\n", string, palin ? "yes" : "no");
+    fprintf(stderr, "%d: %s", palin, output);
+
+    usleep((__useconds_t) (rand() % 2000000));
+
+    // LEAVE CRITICAL SECTION
 
     // Mark this worker as finished
     bundle->worker_states[seq] = WORKER_STATE_FINISHED;
