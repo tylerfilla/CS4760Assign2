@@ -24,7 +24,7 @@
 #include "perrorf.h"
 #include "shared.h"
 
-#define MAX_WORKERS 19
+// TODO: Find all ways master can exit and destroy the shared memory
 
 /**
  * The file path to the executable image of this process.
@@ -43,7 +43,7 @@ int main(int argc, char* argv[])
     // Handle ^C from terminal
     signal(SIGINT, NULL);
 
-    int opt = -1;
+    int opt;
     while ((opt = getopt(argc, argv, "f:")) != -1)
     {
         switch (opt)
@@ -54,10 +54,6 @@ int main(int argc, char* argv[])
             break;
         }
     }
-
-    //
-    // Read Input Strings File
-    //
 
     // Local (non-shared) string buffer
     // This is the working memory for organizing the input strings before we share them
@@ -184,34 +180,83 @@ int main(int argc, char* argv[])
     // All strings are stored in shared memory now
     free(strings.buf);
 
-    //
-    // Spawn Worker Processes
-    //
-    // Work is assigned in a linear fashion. Each string gets assigned to an open slot or the whole things waits until a
-    // slot opens. The number of running palin instances at any time is capped at the value MAX_WORKERS (hardcoded to 19
-    // as per the assignment).
-    //
-
-    // The pids for the running worker processes ("slots")
-    // A value of -1 indicates the slot is open (a process can be spawned)
-    pid_t workers[MAX_WORKERS];
-
-    // Handle all strings
+    // Loop through all strings
     for (size_t str = 0; str < strings.num; ++str)
     {
-        // Find next available worker slot
-        // This implements the maximum cap on the number of concurrent palin instances
-        int slot = MAX_WORKERS;
-        for (; slot < MAX_WORKERS; ++slot)
+        // If number of workers is at max, wait for one to die and try again
+        if (bundle->num_workers == MAX_WORKERS)
         {
-            if (workers[slot] == -1)
+            int stat;
+            wait(&stat);
+
+            // Reclaim finished workers
+            for (int seq = 0; seq < MAX_WORKERS; ++seq)
+            {
+                if (bundle->worker_states[seq] == 2)
+                {
+                    bundle->worker_states[seq] = 0;
+                    bundle->num_workers--;
+                }
+            }
+
+            continue;
+        }
+
+        // Find an available seq number
+        // These can be reused when the associated worker is finished
+        int seq = 0;
+        for (; seq < MAX_WORKERS; ++seq)
+        {
+            if (bundle->worker_states[seq] == 0)
                 break;
         }
 
+        // If no seq number is available, then the workers don't seem to be dying
+        if (seq == MAX_WORKERS)
+            return 1;
 
+        // Fork off a new worker process
+        pid_t worker_pid = fork();
+
+        if (worker_pid == -1)
+        {
+            // Currently in master after failed fork
+            perrorf("%s: fork(2) failed", image_path);
+            return 1;
+        }
+        else if (worker_pid == 0)
+        {
+            // Currently in child after successful fork
+
+            // Convert seq and str to decimal text for command-line argument passing
+            char arg_seq[32];
+            snprintf(arg_seq, sizeof(arg_seq), "%d", seq);
+            char arg_str[32];
+            snprintf(arg_str, sizeof(arg_str), "%ld", str);
+
+            // Execute palin program in this process
+            char image_palin[] = "./palin";
+            if (execv(image_palin, (char* []) { image_palin, arg_seq, arg_str, NULL }))
+            {
+                perrorf("child %d: %d: execv(3) failed", bundle->num_workers, getpid());
+                _exit(EXIT_FAILURE);
+            }
+        }
+        else
+        {
+            // Currently in master after successful fork
+            // Mark worker as running and continue
+            bundle->worker_states[seq] = 1;
+            bundle->num_workers++;
+        }
     }
 
-    // Destruct client bundle and detach the shared memory
+    // Wait for all children to die
+    while (wait(NULL) > 0)
+    {
+    }
+
+    // Destruct client bundle and detach shared memory
     client_bundle_destruct(bundle);
     if (shmdt(bundle) == -1)
     {

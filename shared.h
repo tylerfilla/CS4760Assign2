@@ -10,16 +10,46 @@
 #include <stddef.h>
 
 /**
+ * The maximum number of concurrent worker processes.
+ */
+#define MAX_WORKERS 19
+
+/**
  * Get common IPC key.
  */
 #define get_ipc_key() ftok("/bin/echo", 'Q')
 
 /**
  * A bundle of details shared among the master process to its palin children (client) processes. Designed to be
- * allocated in a shared memory segment (has no pointers to heap-allocated members).
+ * allocated in a shared memory segment (it has no pointers to heap-allocated memory) to provide a conveyor for string
+ * data and synchronization information.
  */
 typedef struct
 {
+    //
+    // Workers
+    //
+
+    /** The current number of workers. */
+    int num_workers;
+
+    /** The current states of all workers. 0 = ready, 1 = running, 2 = finished. */
+    int worker_states[MAX_WORKERS];
+
+    //
+    // Synchronization
+    //
+
+    /** Synchronization flags for running workers. */
+    int worker_flags[MAX_WORKERS];
+
+    /** Synchronization turn for running workers. */
+    int worker_turn;
+
+    //
+    // Strings
+    //
+
     /** The total number of strings when full. */
     size_t num_strings;
 

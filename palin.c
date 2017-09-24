@@ -59,8 +59,10 @@ int main(int argc, char* argv[])
     }
 
     // Parse seq argument
+    // This is a number unique to this palin instance throughout its lifetime
+    // It is used as identification during synchronization
     char* fail_seq = { '\0' };
-    size_t seq = strtoul(argv[1], &fail_seq, 10);
+    int seq = (int) strtol(argv[1], &fail_seq, 10);
     if (*fail_seq != '\0')
     {
         fprintf(stderr, "%s: invalid seq: %s\n", image_path, argv[1]);
@@ -68,6 +70,7 @@ int main(int argc, char* argv[])
     }
 
     // Parse str argument
+    // This is the index of the string assigned to this palin instance
     char* fail_str = { '\0' };
     size_t str = strtoul(argv[2], &fail_str, 10);
     if (*fail_str != '\0')
@@ -84,34 +87,29 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // Attach shared memory as read only and obtain client bundle
+    // Attach shared memory and obtain client bundle
     int shm_id = shmget(ipc_key, 0, 0);
     if (shm_id == -1)
     {
         perrorf("%s: shmget(2) failed", image_path);
         return 1;
     }
-    const client_bundle_t* bundle = shmat(shm_id, NULL, SHM_RDONLY);
+    client_bundle_t* bundle = shmat(shm_id, NULL, 0);
     if (bundle == (void*) -1)
     {
         perrorf("%s: shmat(2) failed", image_path);
         return 1;
     }
 
-    // Validate string index assigned to this palin instance
-    // Probably not necessary in practice, but it can't hurt
-    if (str >= bundle->num_strings)
-    {
-        fprintf(stderr, "%s: str out of range: %ld\n", image_path, str);
-        return 1;
-    }
-
-    // Get assigned string
+    // Determine if assigned string is a palindrome
     const char* string = client_bundle_get_string(bundle, str);
-    size_t string_length = strlen(string);
+    int palin = is_palindrome(string, string + strlen(string) - 1);
 
-    // FIXME: This is just for development
-    fprintf(stderr, "\"%s\": %s\n", string, is_palindrome(string, string + string_length - 1) ? "yes" : "no");
+    // FIXME: This output is just for development
+    fprintf(stderr, "PALINDROME \"%s\": %s\n", string, palin ? "yes" : "no");
+
+    // Mark this worker as ready
+    bundle->worker_states[seq] = 2;
 
     return 0;
 }

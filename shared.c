@@ -4,9 +4,6 @@
  * Tyler Filla
  */
 
-#define _GNU_SOURCE
-#define _POSIX_C_SOURCE 200809L
-
 #include <stddef.h>
 #include <string.h>
 
@@ -41,6 +38,7 @@ void client_bundle_append_string(client_bundle_t* self, const char* string)
 
     // Add string offset to lookup table
     memcpy(self->string_data + self->current_num_strings * sizeof(size_t), &string_offset, sizeof(size_t));
+    self->current_num_strings++;
 }
 
 const char* client_bundle_get_string(const client_bundle_t* self, size_t index)
@@ -50,33 +48,3 @@ const char* client_bundle_get_string(const client_bundle_t* self, size_t index)
     memcpy(&string_offset, self->string_data + index * sizeof(size_t), sizeof(size_t));
     return &self->string_data[string_offset];
 }
-
-/*
-const char* get_shared_buffer()
-{
-    // Create matching IPC key for shared memory
-    key_t ipc_key = get_ipc_key();
-    if (ipc_key == -1)
-    {
-        perrorf("%s: ftok(3) failed", "idk");
-        exit(1);
-    }
-
-    // Attach shared buffer as read-only memory
-    // This does not create the shared buffer
-    int shm_id = shmget(ipc_key, 0, 0);
-    if (shm_id == -1)
-    {
-        perrorf("%s: shmget(2) failed", "idk");
-        exit(1);
-    }
-    const char* shared_buffer = shmat(shm_id, NULL, SHM_RDONLY);
-    if (shared_buffer == (void*) -1)
-    {
-        perrorf("%s: shmat(2) failed", "idk");
-        exit(1);
-    }
-
-    return shared_buffer;
-}
-*/
