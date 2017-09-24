@@ -130,7 +130,7 @@ int main(int argc, char* argv[])
     ///////////////////////////
 
     // Set a cleanup handler for graceful modes of termination
-    atexit(do_cleanup);
+    atexit(&do_cleanup);
 
     // Handle SIGALRM signal (triggered by timeout)
     struct sigaction sigaction_sigalrm = {};
@@ -381,6 +381,8 @@ static void do_cleanup()
     ////////////////////////
     // Clean up resources //
     ////////////////////////
+
+    fprintf(stderr, "cleanup\n");
 
     // Wait for all children to die
     while (wait(NULL) > 0)
