@@ -13,6 +13,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <ctype.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +29,16 @@
  * The file path to the executable image of this process.
  */
 static char* image_path = NULL;
+
+/**
+ * The master-assigned seq number.
+ */
+static int seq = -1;
+
+/**
+ * The master-assigned string index.
+ */
+static size_t str = 0;
 
 /**
  * Determine if an ASCII string is a palindrome.
@@ -75,6 +86,12 @@ static int is_palindrome(const char* first, const char* last)
     return 0;
 }
 
+static void handle_sigint(int sig)
+{
+    fprintf(stderr, "%s #%d interrupted\n", image_path, seq);
+    exit(2);
+}
+
 int main(int argc, char* argv[])
 {
     image_path = argv[0];
@@ -91,7 +108,7 @@ int main(int argc, char* argv[])
     // This is a number unique to this palin instance throughout its lifetime
     // It is used as identification during synchronization
     char* fail_seq = { '\0' };
-    int seq = (int) strtol(argv[1], &fail_seq, 10);
+    seq = (int) strtol(argv[1], &fail_seq, 10);
     if (*fail_seq != '\0')
     {
         fprintf(stderr, "%s: invalid seq: %s\n", image_path, argv[1]);
@@ -101,10 +118,19 @@ int main(int argc, char* argv[])
     // Parse str argument
     // This is the index of the string assigned to this palin instance
     char* fail_str = { '\0' };
-    size_t str = strtoul(argv[2], &fail_str, 10);
+    str = strtoul(argv[2], &fail_str, 10);
     if (*fail_str != '\0')
     {
         fprintf(stderr, "%s: invalid str: %s\n", image_path, argv[2]);
+        return 1;
+    }
+
+    // Handle SIGINT signal (most likely triggered by terminal ^C key combo)
+    struct sigaction sigaction_sigint = {};
+    sigaction_sigint.sa_handler = &handle_sigint;
+    if (sigaction(SIGINT, &sigaction_sigint, NULL))
+    {
+        perrorf("%s: cannot handle SIGINT: sigaction(2) failed", image_path);
         return 1;
     }
 
@@ -139,6 +165,7 @@ int main(int argc, char* argv[])
     char output[256];
     snprintf(output, sizeof(output), "%d %ld %s\n", getpid(), str, string);
 
+    /*
     // ENTER CRITICAL SECTION (do this 5 times)
 
     usleep((__useconds_t) (rand() % 2000000));
@@ -151,6 +178,14 @@ int main(int argc, char* argv[])
     usleep((__useconds_t) (rand() % 2000000));
 
     // LEAVE CRITICAL SECTION
+    */
+
+    for (int trial = 0; trial < 5; ++trial)
+    {
+        fprintf(stderr, "%d trial %d\n", seq, trial);
+    }
+
+    usleep((__useconds_t) (rand() % 20000000));
 
     // Mark this worker as finished
     bundle->worker_states[seq] = WORKER_STATE_FINISHED;

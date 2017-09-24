@@ -50,13 +50,19 @@ static void do_cleanup();
 
 static void handle_sigalrm(int sig)
 {
-    fprintf(stderr, "\nTimeout; exiting with errors\n");
+    fprintf(stderr, "Timeout encountered\n");
+
+    // For simplicity, we treat the timeout feature as an interrupt mechanism
+    // Send SIGINT to all in this process group
+    // This propagates to all children
+    killpg(getpgrp(), SIGINT);
+
     exit(2);
 }
 
 static void handle_sigint(int sig)
 {
-    fprintf(stderr, "\nKeyboard interrupt; exiting with errors\n");
+    fprintf(stderr, "Execution interrupted\n");
     exit(2);
 }
 
