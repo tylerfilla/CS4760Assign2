@@ -382,8 +382,6 @@ static void do_cleanup()
     // Clean up resources //
     ////////////////////////
 
-    fprintf(stderr, "cleanup\n");
-
     // Wait for all children to die
     while (wait(NULL) > 0)
     {
