@@ -53,20 +53,15 @@ To build the project, run the following:
 
 $ make
 
-Running
-=======
-
-To run the project, use the following commands:
-
-Documentation
--------------
+Running: Help
+=============
 
 For help, run the following:
 
 $ ./master -h
 
-Examples
---------
+Running: Examples
+=================
 
 $ ./master
 
@@ -165,4 +160,4 @@ string_buffer[M * sizeof(size_t)].
 
 This is a blob of tightly packed null-terminated strings. Strings are not necessarily fixed in size, so the total size
 of this area depends highly on their contents. To accommodate this, the client bundle takes advantage of a flexible
-array member.
+array member at the end of the struct.
