@@ -373,6 +373,11 @@ int main(int argc, char* argv[])
         }
     }
 
+    // Wait for all children to die
+    while (wait(NULL) > 0)
+    {
+    }
+
     return 0;
 }
 
@@ -381,11 +386,6 @@ static void do_cleanup()
     ////////////////////////
     // Clean up resources //
     ////////////////////////
-
-    // Wait for all children to die
-    while (wait(NULL) > 0)
-    {
-    }
 
     // Destruct client bundle
     client_bundle_destruct(bundle);
