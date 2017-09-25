@@ -129,10 +129,10 @@ String Data
 
 The master program supports a variable number of input strings (even more than the maximum number of palin processes),
 so a number of measurements are taken on a heap-allocated copy of all the strings before they are packed into the client
-bundle. These measurements (named (1) count and (2) mass: (1) the total number of strings and (2) the total memory size
-of the null-terminated strings packed tightly, end-to-end, respectively) are used to build an exactly-sized data buffer
-to share strings to workers. This places no theoretical maximum size on any one string and can accommodate a string of
-length 1 with as few as two bytes (sans overhead, see below).
+bundle. These measurements (named (1) count and (2) mass, are (1) the total number of strings and (2) the total memory
+size of the null-terminated strings packed tightly, end-to-end, respectively) are used to build an exactly-sized data
+buffer to share strings to workers. This places no theoretical maximum size on any one string and can accommodate a
+string of length 1 with as few as two bytes (sans overhead, see below).
 
 Packing the strings in this fashion alone would cause an immense performance hit for many strings, as workers would be
 forced to count null terminators. To counter this, a lookup table technique is used. An array of size_t values is copied
@@ -157,14 +157,12 @@ just before the section of packed strings as seen in this diagram:
 ### Lookup Table ###
 
 The lookup table is a contiguous array of <string count> size_t elements. Each element is an absolute offset into the
-shared buffer of the first byte of the first character of the corresponding null-terminated string. For instance, to
-read the string with index M, look at (const char*) &shared_buffer[X], where X is a size_t constructed from the bytes at
-shared_buffer[sizeof(size_t) + M * sizeof(size_t)].
+string buffer of the first byte of the first character of the corresponding null-terminated string. For instance, to
+read the string with index M, look at (const char*) &string_buffer[X], where X is a size_t constructed from the bytes at
+string_buffer[M * sizeof(size_t)].
 
 ### Strings Area ###
 
 This is a blob of tightly packed null-terminated strings. Strings are not necessarily fixed in size, so the total size
-of this area depends highly on their contents.
-
-NOTE: The parent and child processes execute on the same machine, so there is no concern about architecture differences
-in sharing the size_t type.
+of this area depends highly on their contents. To accommodate this, the client bundle takes advantage of a flexible
+array member.
