@@ -192,66 +192,65 @@ int main(int argc, char* argv[])
     // Write results to disk //
     ///////////////////////////
 
-    // The constraints here are a bit exaggerated as per the instructions
-    // This enters and exits the critical section 5 times, thus printing each result 5 times
-    for (int trial = 0; trial < 5; ++trial)
+    fprintf(stderr, "Worker %2d (pid %8d) critical section READY   at %ld\n", seq, getpid(), time(NULL));
+
+    // Arbitrate access to critical section
+    int local_turn;
+    do
     {
-        fprintf(stderr, "Worker %2d (pid %8d) critical section READY   at %ld\n", seq, getpid(), time(NULL));
+        // Assert desire for critical section
+        bundle->worker_flags[seq] = WORKER_FLAG_WANT_IN;
 
-        // Arbitrate access to critical section
-        int local_turn;
-        do
+        // Find next non-idle worker that's not this one
+        local_turn = bundle->worker_turn;
+        while (local_turn != seq)
         {
-            // Assert desire for critical section
-            bundle->worker_flags[seq] = WORKER_FLAG_WANT_IN;
-
-            // Find next non-idle worker that's not this one
-            local_turn = bundle->worker_turn;
-            while (local_turn != seq)
-            {
-                local_turn = (bundle->worker_flags[local_turn] != WORKER_FLAG_IDLE) ? bundle->worker_turn :
-                             (local_turn + 1) % MAX_WORKERS;
-            }
-
-            // Declare intent to enter critical section
-            bundle->worker_flags[seq] = WORKER_FLAG_IN_CS;
-
-            // Check that no one else is in critical section
-            for (local_turn = 0; local_turn < MAX_WORKERS; ++local_turn)
-            {
-                if ((local_turn != seq) && (bundle->worker_flags[local_turn] == WORKER_FLAG_IN_CS))
-                    break;
-            }
-        } while ((local_turn < MAX_WORKERS) ||
-                (bundle->worker_turn != seq && bundle->worker_flags[bundle->worker_turn] != WORKER_FLAG_IDLE));
-
-        // Declare entry to critical section
-        bundle->worker_turn = seq;
-
-        fprintf(stderr, "Worker %2d (pid %8d) critical section ENTERED at %ld\n", seq, getpid(), time(NULL));
-
-        // Sleep for a duration in [0, 2] seconds
-        sleep_us_between_s(0, 2);
-
-        // Write result to either palin.out or nopalin.out depending on its palindrome-ness
-        FILE* out_file = fopen(palin ? "palin.out" : "nopalin.out", "a");
-        fprintf(out_file, "%s\n", output);
-        fclose(out_file);
-
-        // Sleep once more for a duration in [0, 2] seconds
-        sleep_us_between_s(0, 2);
-
-        // Pass turn to next idle worker
-        local_turn = (bundle->worker_turn + 1) % MAX_WORKERS;
-        while (bundle->worker_flags[local_turn] == WORKER_FLAG_IDLE)
-        {
-            local_turn = (local_turn + 1) % MAX_WORKERS;
+            local_turn = (bundle->worker_flags[local_turn] != WORKER_FLAG_IDLE) ? bundle->worker_turn :
+                         (local_turn + 1) % MAX_WORKERS;
         }
-        bundle->worker_turn = local_turn;
-        bundle->worker_flags[seq] = WORKER_FLAG_IDLE;
 
-        fprintf(stderr, "Worker %2d (pid %8d) critical section LEFT    at %ld\n", seq, getpid(), time(NULL));
+        // Declare intent to enter critical section
+        bundle->worker_flags[seq] = WORKER_FLAG_IN_CS;
+
+        // Check that no one else is in critical section
+        for (local_turn = 0; local_turn < MAX_WORKERS; ++local_turn)
+        {
+            if ((local_turn != seq) && (bundle->worker_flags[local_turn] == WORKER_FLAG_IN_CS))
+                break;
+        }
+    } while ((local_turn < MAX_WORKERS) ||
+            (bundle->worker_turn != seq && bundle->worker_flags[bundle->worker_turn] != WORKER_FLAG_IDLE));
+
+    // Declare entry to critical section
+    bundle->worker_turn = seq;
+
+    fprintf(stderr, "Worker %2d (pid %8d) critical section ENTERED at %ld\n", seq, getpid(), time(NULL));
+
+    // Sleep for a duration in [0, 2] seconds
+    sleep_us_between_s(0, 2);
+
+    // Write result to either palin.out or nopalin.out depending on its palindrome-ness
+    FILE* out_file = fopen(palin ? "palin.out" : "nopalin.out", "a");
+    fprintf(out_file, "%s\n", output);
+    fclose(out_file);
+
+    // Sleep once more for a duration in [0, 2] seconds
+    sleep_us_between_s(0, 2);
+
+    fprintf(stderr, "Worker %2d (pid %8d) critical section LEAVING at %ld\n", seq, getpid(), time(NULL));
+
+    // Pass turn to next idle worker
+    local_turn = (bundle->worker_turn + 1) % MAX_WORKERS;
+    while (bundle->worker_flags[local_turn] == WORKER_FLAG_IDLE)
+    {
+        local_turn = (local_turn + 1) % MAX_WORKERS;
     }
+    bundle->worker_turn = local_turn;
+    bundle->worker_flags[seq] = WORKER_FLAG_IDLE;
+
+    // We are now outside the cricical section
+    // This message might appear after the next ENTERED message
+    fprintf(stderr, "Worker %2d (pid %8d) critical section LEFT    at %ld\n", seq, getpid(), time(NULL));
 
     // Mark this worker as finished
     bundle->worker_states[seq] = WORKER_STATE_FINISHED;

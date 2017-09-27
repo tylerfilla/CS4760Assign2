@@ -16,16 +16,13 @@ Once launched, the master process follows roughly these steps:
 4. Sets up a shared memory region with these strings
 5. Launches the palin program repeatedly to process the strings
 
-* A configurable timer is provided to prevent lengthy computation.
+* Timer is configurable with millisecond precision to interrupt any lengthy computation.
 
 The palin processes all follow these steps:
 1. Handle command-line arguments
 2. Connect to the shared memory region
 3. Process their assigned strings and generate results
 4. Arbitrate access to and write results to the two output files, palin.out and nopalin.out
-
-NOTE: As per the assignment, step 4 is performed 5 times, which directly results in each string being written to its
-corresponding output file 5 times. This is intentional to satisfy the requirement.
 
 Directory Tree
 ==============
@@ -73,7 +70,7 @@ $ ./master -f file.in
 
 This will run master with params:
 - Input file: file.in
-- Timeout: 60 seconds
+- Timeout: 60 seconds (60000 ms)
 
 $ ./master -t 30000 -f file.in
 
